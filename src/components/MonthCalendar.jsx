@@ -1,14 +1,6 @@
 import { useState, useMemo } from 'react'
 import { getVehicle, VEHICLES, getVehicleName } from '../lib/vehicles'
-
-const MAANDEN = [
-  'januari', 'februari', 'maart', 'april', 'mei', 'juni',
-  'juli', 'augustus', 'september', 'oktober', 'november', 'december'
-]
-const DAGEN = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo']
-
-function pad(n) { return String(n).padStart(2, '0') }
-function toDateStr(y, m, d) { return `${y}-${pad(m + 1)}-${pad(d)}` }
+import { MAANDEN, DAGEN, toDateStringYMD as toDateStr, formatDatumKort as formatSelected } from '../lib/date'
 
 export default function MonthCalendar({ bookings, selectedDate, onSelectDate }) {
   const initial = selectedDate ? new Date(selectedDate + 'T00:00:00') : new Date()
@@ -170,10 +162,4 @@ export default function MonthCalendar({ bookings, selectedDate, onSelectDate }) 
       </div>
     </div>
   )
-}
-
-function formatSelected(dateStr) {
-  return new Date(dateStr + 'T00:00:00').toLocaleDateString('nl-NL', {
-    weekday: 'long', day: 'numeric', month: 'long'
-  })
 }

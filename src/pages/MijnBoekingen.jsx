@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { VEHICLES, getVehicle, getVehicleName } from '../lib/vehicles'
+import { toDateString, formatDatumKort, MAANDEN, DAGEN as DAGnamen } from '../lib/date'
 
 function getWeekDays(startDate) {
   const days = []
@@ -13,13 +14,6 @@ function getWeekDays(startDate) {
   }
   return days
 }
-
-function toDateString(date) {
-  return date.toISOString().split('T')[0]
-}
-
-const DAGnamen = ['Ma', 'Di', 'Wo', 'Do', 'Vr', 'Za', 'Zo']
-const MAANDEN = ['januari','februari','maart','april','mei','juni','juli','augustus','september','oktober','november','december']
 
 export default function MijnBoekingen() {
   const [boekingen, setBoekingen] = useState([])
@@ -186,7 +180,7 @@ export default function MijnBoekingen() {
       {/* Boekingen op geselecteerde dag */}
       <div style={{ marginBottom: 8 }}>
         <div style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 10 }}>
-          {new Date(geselecteerdeDag + 'T00:00:00').toLocaleDateString('nl-NL', { weekday: 'long', day: 'numeric', month: 'long' })}
+          {formatDatumKort(geselecteerdeDag)}
         </div>
 
         {loading && <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Laden...</div>}

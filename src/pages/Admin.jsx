@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { VEHICLES, getVehicle, getVehicleName } from '../lib/vehicles'
+import { formatDatumLang as formatDatum } from '../lib/date'
 
 export default function Admin() {
   const [boekingen, setBoekingen] = useState([])
@@ -204,10 +205,4 @@ export default function Admin() {
       ))}
     </div>
   )
-}
-
-function formatDatum(dateStr) {
-  return new Date(dateStr + 'T00:00:00').toLocaleDateString('nl-NL', {
-    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
-  })
 }

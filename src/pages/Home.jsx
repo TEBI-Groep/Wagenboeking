@@ -2,11 +2,8 @@ import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { VEHICLES, getVehicle, getVehicleName } from '../lib/vehicles'
+import { getTodayString } from '../lib/date'
 import MonthCalendar from '../components/MonthCalendar'
-
-function getTodayString() {
-  return new Date().toISOString().split('T')[0]
-}
 
 export default function Home() {
   const [user, setUser] = useState(null)
@@ -241,10 +238,4 @@ export default function Home() {
       </div>
     </div>
   )
-}
-
-function formatDatum(dateStr) {
-  return new Date(dateStr + 'T00:00:00').toLocaleDateString('nl-NL', {
-    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
-  })
 }
