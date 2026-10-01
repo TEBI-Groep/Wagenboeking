@@ -118,6 +118,8 @@ export default function Home() {
         body: JSON.stringify({
           naam: user.naam, email: user.email, datum, tijdslot,
           wagen: `${getVehicleName(vehicle)} – ${vehicle.variant} (${vehicle.kenteken})`,
+          wagenNaam: `${getVehicleName(vehicle)} · ${vehicle.variant}`,
+          kenteken: vehicle.kenteken,
         }),
       })
     } catch (mailErr) {
