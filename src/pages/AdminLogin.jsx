@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import AuthShell from '../components/AuthShell'
 
 export default function AdminLogin() {
   const [email, setEmail] = useState('')
@@ -16,7 +17,7 @@ export default function AdminLogin() {
 
     const { error } = await supabase.auth.signInWithPassword({
       email: email.trim(),
-      password: wachtwoord
+      password: wachtwoord,
     })
 
     if (error) {
@@ -29,63 +30,25 @@ export default function AdminLogin() {
   }
 
   return (
-    <div style={{
-      minHeight: '100vh',
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      justifyContent: 'center',
-      padding: '24px 20px',
-      background: 'var(--bg)'
-    }}>
-      <div style={{ marginBottom: 40, textAlign: 'center' }}>
-        <div style={{
-          width: 56, height: 56, background: 'var(--dark)',
-          borderRadius: 14, display: 'flex', alignItems: 'center',
-          justifyContent: 'center', fontSize: '1.6rem', fontWeight: 800,
-          color: '#fff', margin: '0 auto 16px',
-          boxShadow: '0 4px 16px rgba(0,0,0,0.2)'
-        }}>T</div>
-        <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--dark)', letterSpacing: '-0.03em', marginBottom: 6 }}>
-          Admin
-        </h1>
-        <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-          Log in om boekingen te beheren.
-        </p>
-      </div>
-
-      <div className="card" style={{ width: '100%', maxWidth: 400 }}>
-        {error && <div className="alert alert-error">{error}</div>}
-
-        <form onSubmit={handleLogin}>
-          <div className="form-group">
-            <label htmlFor="email">E-mailadres</label>
-            <input
-              id="email"
-              type="email"
-              placeholder="admin@tebi.nl"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              required
-              autoFocus
-            />
-          </div>
-          <div className="form-group" style={{ marginBottom: 24 }}>
-            <label htmlFor="wachtwoord">Wachtwoord</label>
-            <input
-              id="wachtwoord"
-              type="password"
-              placeholder="••••••••"
-              value={wachtwoord}
-              onChange={e => setWachtwoord(e.target.value)}
-              required
-            />
-          </div>
-          <button type="submit" className="btn btn-primary btn-full" disabled={loading}>
-            {loading ? 'Bezig...' : 'Inloggen →'}
-          </button>
-        </form>
-      </div>
-    </div>
+    <AuthShell
+      title="Beheer"
+      subtitle="Log in om reserveringen en blokkades te beheren."
+      footer={<Link to="/">Terug naar reserveren</Link>}
+    >
+      {error && <div className="notice notice-error">{error}</div>}
+      <form className="stack" onSubmit={handleLogin}>
+        <label className="field">
+          <span className="field-label">E-mailadres</span>
+          <input className="input" type="email" placeholder="admin@tebi.nl" value={email} onChange={e => setEmail(e.target.value)} required autoFocus autoComplete="username" />
+        </label>
+        <label className="field">
+          <span className="field-label">Wachtwoord</span>
+          <input className="input" type="password" value={wachtwoord} onChange={e => setWachtwoord(e.target.value)} required autoComplete="current-password" />
+        </label>
+        <button type="submit" className="btn btn-primary btn-block" disabled={loading}>
+          {loading ? 'Bezig…' : 'Inloggen'}
+        </button>
+      </form>
+    </AuthShell>
   )
 }

@@ -18,22 +18,18 @@ export default function App() {
         <Route path="/*" element={
           <>
             <Navbar />
-            <main style={{ flex: 1 }}>
+            <main>
               <Routes>
                 <Route path="/" element={<Home />} />
                 <Route path="/mijn-boekingen" element={<MijnBoekingen />} />
                 <Route path="/admin" element={<Admin />} />
               </Routes>
             </main>
-            <footer style={{
-              textAlign: 'center',
-              padding: '24px 16px',
-              fontSize: '0.78rem',
-              color: 'var(--text-light)',
-              borderTop: '1px solid var(--border)',
-              background: 'var(--surface)',
-            }}>
-              © {new Date().getFullYear()} TEBI Bestratingsmaterialen
+            <footer className="footer">
+              <div className="footer-inner">
+                <span>© {new Date().getFullYear()} TEBI Bestratingsmaterialen</span>
+                <span>Vragen? Mail it@tebi.nl</span>
+              </div>
             </footer>
           </>
         } />

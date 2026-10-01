@@ -2,7 +2,7 @@
   "name": "TEBI Wagenboeking",
   "short_name": "Wagenboeking",
   "description": "Boek een bedrijfswagen bij TEBI Bestratingsmaterialen",
-  "theme_color": "#3d3d3d",
+  "theme_color": "#ffffff",
   "background_color": "#ffffff",
   "display": "standalone",
   "start_url": "/",

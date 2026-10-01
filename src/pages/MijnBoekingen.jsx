@@ -1,226 +1,161 @@
 import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { VEHICLES, getVehicle, getVehicleName } from '../lib/vehicles'
-import { toDateString, formatDatumKort, MAANDEN, DAGEN as DAGnamen } from '../lib/date'
-
-function getWeekDays(startDate) {
-  const days = []
-  const start = new Date(startDate)
-  start.setDate(start.getDate() - start.getDay() + 1) // Maandag
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(start)
-    d.setDate(start.getDate() + i)
-    days.push(d)
-  }
-  return days
-}
+import { VEHICLES, getVehicle, getBlock } from '../lib/vehicles'
+import { getTodayString, startOfWeek, addDays, weekNumber, formatDag, formatKort, formatTijd } from '../lib/date'
+import VehicleLabel from '../components/VehicleLabel'
+import ConfirmButton from '../components/ConfirmButton'
+import { ChevronLeft, ChevronRight } from '../components/Icons'
 
 export default function MijnBoekingen() {
-  const [boekingen, setBoekingen] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [geselecteerdeDag, setGeselecteerdeDag] = useState(toDateString(new Date()))
-  const [weekStart, setWeekStart] = useState(new Date())
-  const [wagenFilter, setWagenFilter] = useState('alle')
-  const [error, setError] = useState('')
+  const today = getTodayString()
   const [user, setUser] = useState(null)
+  const [mijn, setMijn] = useState([])
+  const [week, setWeek] = useState([])
+  const [blocks, setBlocks] = useState([])
+  const [weekStart, setWeekStart] = useState(startOfWeek(today))
+  const [wagenFilter, setWagenFilter] = useState('alle')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const weekEnd = addDays(weekStart, 6)
 
   useEffect(() => {
     const opgeslagen = localStorage.getItem('tebi_user')
-    if (opgeslagen) setUser(JSON.parse(opgeslagen))
-    fetchBoekingen()
+    if (!opgeslagen) return
+    const u = JSON.parse(opgeslagen)
+    setUser(u)
+    fetchMijn(u)
   }, [])
 
-  async function fetchBoekingen() {
-    setLoading(true)
+  useEffect(() => {
+    fetchWeek()
+  }, [weekStart])
+
+  async function fetchMijn(u) {
     const { data, error } = await supabase
       .from('bookings')
       .select('*')
-      .gte('datum', toDateString(new Date()))
+      .eq('email', u.email)
+      .gte('datum', today)
       .order('datum', { ascending: true })
       .order('van', { ascending: true })
-
     if (error) setError('Fout bij ophalen: ' + error.message)
-    else setBoekingen(data || [])
+    else setMijn(data || [])
+  }
+
+  async function fetchWeek() {
+    setLoading(true)
+    const [boekingenRes, blocksRes] = await Promise.all([
+      supabase.from('bookings').select('*')
+        .gte('datum', weekStart).lte('datum', weekEnd)
+        .order('datum', { ascending: true }).order('van', { ascending: true }),
+      supabase.from('vehicle_blocks').select('*')
+        .lte('van_datum', weekEnd).gte('tot_datum', weekStart),
+    ])
+    if (boekingenRes.error) setError('Fout bij ophalen: ' + boekingenRes.error.message)
+    else setWeek(boekingenRes.data || [])
+    setBlocks(blocksRes.data || [])
     setLoading(false)
   }
 
   async function annuleer(id) {
-    if (!confirm('Wil je deze boeking annuleren?')) return
     const { error } = await supabase.from('bookings').delete().eq('id', id)
-    if (error) alert('Annuleren mislukt: ' + error.message)
-    else setBoekingen(prev => prev.filter(b => b.id !== id))
+    if (error) { setError('Annuleren mislukt: ' + error.message); return }
+    setMijn(prev => prev.filter(b => b.id !== id))
+    setWeek(prev => prev.filter(b => b.id !== id))
   }
 
-  const weekDagen = getWeekDays(weekStart)
-  const today = toDateString(new Date())
-
-  const boekingenGefilterd = wagenFilter === 'alle' ? boekingen : boekingen.filter(b => b.wagen === wagenFilter)
-  const boekingenOpDag = boekingenGefilterd.filter(b => b.datum === geselecteerdeDag)
-
-  function vorigeWeek() {
-    const d = new Date(weekStart)
-    d.setDate(d.getDate() - 7)
-    setWeekStart(d)
-  }
-
-  function volgendeWeek() {
-    const d = new Date(weekStart)
-    d.setDate(d.getDate() + 7)
-    setWeekStart(d)
-  }
-
-  const maandJaar = () => {
-    const d = weekDagen[0]
-    return `${MAANDEN[d.getMonth()]} ${d.getFullYear()}`
-  }
+  const dagen = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
+  const zichtbareWagens = wagenFilter === 'alle' ? VEHICLES : VEHICLES.filter(v => v.id === wagenFilter)
 
   return (
-    <div className="page-container">
-      <div className="page-header">
-        <h1 className="page-title">Boekingen</h1>
-        <p className="page-subtitle">Bekijk wanneer de bedrijfswagen beschikbaar is.</p>
-      </div>
+    <div className="shell">
+      <header className="page-head">
+        <div>
+          <h1 className="page-title">Mijn boekingen</h1>
+          <p className="page-sub">Je eigen reserveringen en de planning van alle auto's.</p>
+        </div>
+      </header>
 
-      {error && <div className="alert alert-error">{error}</div>}
+      {error && <div className="notice notice-error">{error}</div>}
 
-      {/* Wagen filter */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-        <button
-          className="btn btn-sm"
-          onClick={() => setWagenFilter('alle')}
-          style={{
-            border: wagenFilter === 'alle' ? '1.5px solid var(--text)' : '1.5px solid var(--border)',
-            background: wagenFilter === 'alle' ? 'var(--text)' : 'var(--surface)',
-            color: wagenFilter === 'alle' ? '#fff' : 'var(--text)',
-          }}
-        >
-          Alle auto's
-        </button>
-        {VEHICLES.map(v => {
-          const actief = wagenFilter === v.id
-          return (
-            <button
-              key={v.id}
-              className="btn btn-sm"
-              onClick={() => setWagenFilter(v.id)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                border: actief ? `1.5px solid ${v.kleur}` : '1.5px solid var(--border)',
-                background: actief ? `${v.kleur}14` : 'var(--surface)',
-                color: actief ? v.kleur : 'var(--text)',
-                fontWeight: actief ? 700 : 500,
-              }}
-            >
-              <span style={{ width: 8, height: 8, borderRadius: '50%', background: v.kleur, display: 'inline-block' }} />
-              {v.variant}
-            </button>
-          )
-        })}
-      </div>
+      {user && (
+        <section className="section">
+          <h2 className="section-title">Jouw reserveringen</h2>
+          <div className="panel">
+            {mijn.length === 0 ? (
+              <div className="empty">
+                Je hebt geen aankomende reserveringen. <Link to="/">Auto reserveren</Link>
+              </div>
+            ) : mijn.map(b => (
+              <div key={b.id} className="list-row">
+                <div className="list-date">
+                  <div className="strong">{formatDag(b.datum)}</div>
+                  <div className="muted num">{formatTijd(b.van)}–{formatTijd(b.tot)}</div>
+                </div>
+                <div className="list-main"><VehicleLabel vehicle={getVehicle(b.wagen)} plate /></div>
+                <ConfirmButton onConfirm={() => annuleer(b.id)}>Annuleren</ConfirmButton>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
-      {/* Kalender */}
-      <div className="card" style={{ marginBottom: 20, padding: '20px' }}>
-        {/* Navigatie */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-          <button className="btn btn-ghost btn-sm" onClick={vorigeWeek}>←</button>
-          <span style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--dark)' }}>{maandJaar()}</span>
-          <button className="btn btn-ghost btn-sm" onClick={volgendeWeek}>→</button>
+      <section className="section">
+        <div className="section-head">
+          <h2 className="section-title">Planning</h2>
+          <div className="weeknav">
+            <button type="button" className="btn btn-ghost btn-sm btn-icon" onClick={() => setWeekStart(addDays(weekStart, -7))} aria-label="Vorige week"><ChevronLeft /></button>
+            <span className="weeknav-label num">Week {weekNumber(weekStart)} · {formatKort(weekStart)} – {formatKort(weekEnd)}</span>
+            <button type="button" className="btn btn-ghost btn-sm btn-icon" onClick={() => setWeekStart(addDays(weekStart, 7))} aria-label="Volgende week"><ChevronRight /></button>
+            {weekStart !== startOfWeek(today) && (
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => setWeekStart(startOfWeek(today))}>Deze week</button>
+            )}
+          </div>
         </div>
 
-        {/* Dagen */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 6 }}>
-          {weekDagen.map((dag, i) => {
-            const dagStr = toDateString(dag)
-            const boekingenDezeDag = boekingenGefilterd.filter(b => b.datum === dagStr)
-            const isGeselecteerd = dagStr === geselecteerdeDag
-            const isVandaag = dagStr === today
-            const isVerleden = dagStr < today
+        <div className="segmented" style={{ marginBottom: 12 }}>
+          <button type="button" className={wagenFilter === 'alle' ? 'is-active' : ''} onClick={() => setWagenFilter('alle')}>Alle auto's</button>
+          {VEHICLES.map(v => (
+            <button type="button" key={v.id} className={wagenFilter === v.id ? 'is-active' : ''} onClick={() => setWagenFilter(v.id)}>
+              <span className="dot" style={{ background: v.kleur }} />{v.variant}
+            </button>
+          ))}
+        </div>
 
+        <div className="panel">
+          {loading ? <div className="empty">Laden…</div> : dagen.map(dag => {
+            const items = week.filter(b => b.datum === dag && (wagenFilter === 'alle' || b.wagen === wagenFilter))
+            const dagBlocks = zichtbareWagens.map(v => [v, getBlock(blocks, v.id, dag)]).filter(([, b]) => b)
+            const cls = `day-row${dag === today ? ' is-today' : ''}${dag < today ? ' is-past' : ''}`
             return (
-              <button
-                key={dagStr}
-                onClick={() => setGeselecteerdeDag(dagStr)}
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  gap: 4,
-                  padding: '10px 4px',
-                  borderRadius: 10,
-                  border: isVandaag ? '2px solid var(--green)' : '2px solid transparent',
-                  background: isGeselecteerd ? 'var(--green)' : 'var(--bg)',
-                  color: isGeselecteerd ? '#fff' : isVerleden ? 'var(--text-light)' : 'var(--text)',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s',
-                  opacity: isVerleden && !isGeselecteerd ? 0.5 : 1,
-                }}
-              >
-                <span style={{ fontSize: '0.7rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  {DAGnamen[i]}
-                </span>
-                <span style={{ fontSize: '1rem', fontWeight: 700, lineHeight: 1 }}>
-                  {dag.getDate()}
-                </span>
-                {boekingenDezeDag.length > 0 && (
-                  <span style={{ display: 'flex', gap: 2 }}>
-                    {boekingenDezeDag.slice(0, 3).map((b, idx) => (
-                      <span key={idx} style={{
-                        width: 6, height: 6, borderRadius: '50%',
-                        background: isGeselecteerd ? 'rgba(255,255,255,0.9)' : getVehicle(b.wagen).kleur
-                      }} />
-                    ))}
-                  </span>
-                )}
-              </button>
+              <div key={dag} className={cls}>
+                <div className="day-label">
+                  {formatDag(dag)}
+                  {dag === today && <span className="tag tag-green">Vandaag</span>}
+                </div>
+                <div className="day-items">
+                  {dagBlocks.map(([v, b]) => (
+                    <div key={`blok-${v.id}`} className="entry">
+                      <span className="entry-time muted">Hele dag</span>
+                      <VehicleLabel vehicle={v} />
+                      <span className="tag tag-red">Niet beschikbaar{b.reden ? ` · ${b.reden}` : ''}</span>
+                    </div>
+                  ))}
+                  {items.map(b => (
+                    <div key={b.id} className="entry">
+                      <span className="entry-time">{formatTijd(b.van)}–{formatTijd(b.tot)}</span>
+                      <VehicleLabel vehicle={getVehicle(b.wagen)} />
+                      <span className="muted">{b.naam}</span>
+                    </div>
+                  ))}
+                  {items.length === 0 && dagBlocks.length === 0 && <span className="muted">Geen reserveringen</span>}
+                </div>
+              </div>
             )
           })}
         </div>
-      </div>
-
-      {/* Boekingen op geselecteerde dag */}
-      <div style={{ marginBottom: 8 }}>
-        <div style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 10 }}>
-          {formatDatumKort(geselecteerdeDag)}
-        </div>
-
-        {loading && <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Laden...</div>}
-
-        {!loading && boekingenOpDag.length === 0 && (
-          <div className="card" style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted)' }}>
-            <div style={{ fontSize: '1.5rem', marginBottom: 8 }}>✓</div>
-            <p style={{ fontSize: '0.9rem' }}>Geen boekingen — wagen is beschikbaar.</p>
-          </div>
-        )}
-
-        {boekingenOpDag.map(b => {
-          const v = getVehicle(b.wagen)
-          return (
-            <div key={b.id} className="card" style={{ marginBottom: 10, padding: '16px 20px', borderLeft: `3px solid ${v.kleur}` }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                    <span style={{ fontWeight: 700, fontSize: '1rem' }}>
-                      {b.van ? `${b.van.slice(0,5)} – ${b.tot.slice(0,5)}` : b.tijdslot}
-                    </span>
-                    <span style={{
-                      fontSize: '0.7rem', fontWeight: 700, color: v.kleur, background: `${v.kleur}14`,
-                      padding: '2px 8px', borderRadius: 99,
-                    }}>
-                      {v.variant} <span style={{ opacity: 0.7, fontWeight: 500 }}>· {v.kenteken}</span>
-                    </span>
-                  </div>
-                  <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{b.naam}</div>
-                </div>
-                {geselecteerdeDag >= today && user && b.email === user.email && (
-                  <button className="btn btn-ghost btn-sm" onClick={() => annuleer(b.id)}>
-                    Annuleren
-                  </button>
-                )}
-              </div>
-            </div>
-          )
-        })}
-      </div>
+      </section>
     </div>
   )
 }

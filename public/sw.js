@@ -1,5 +1,5 @@
 // Service Worker — TEBI Wagenboeking
-const CACHE = 'wagenboeking-v1'
+const CACHE = 'wagenboeking-v2'
 const PRECACHE = ['/', '/index.html']
 
 self.addEventListener('install', e => {

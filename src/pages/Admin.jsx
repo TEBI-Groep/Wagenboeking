@@ -2,35 +2,71 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { VEHICLES, getVehicle, getVehicleName } from '../lib/vehicles'
-import { formatDatumLang as formatDatum, formatDatumKort, getTodayString } from '../lib/date'
+import { getTodayString, addDays, formatDatumLang, formatDag, formatTijd } from '../lib/date'
+import DayTimeline from '../components/DayTimeline'
+import VehicleLabel from '../components/VehicleLabel'
+import ConfirmButton from '../components/ConfirmButton'
+import { ChevronLeft, ChevronRight, Refresh } from '../components/Icons'
 
 export default function Admin() {
+  const today = getTodayString()
+  const navigate = useNavigate()
+  const [authLoading, setAuthLoading] = useState(true)
+  const [tab, setTab] = useState('boekingen')
+  const [error, setError] = useState('')
+
+  // Boekingen
+  const [boekingen, setBoekingen] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [periode, setPeriode] = useState('aankomend')
+  const [wagenFilter, setWagenFilter] = useState('alle')
+  const [zoek, setZoek] = useState('')
+  const [dag, setDag] = useState(today)
+
+  // Blokkades
   const [blocks, setBlocks] = useState([])
   const [blockWagen, setBlockWagen] = useState(VEHICLES[0].id)
-  const [blockVan, setBlockVan] = useState(getTodayString())
+  const [blockVan, setBlockVan] = useState(today)
   const [blockTot, setBlockTot] = useState('')
   const [blockReden, setBlockReden] = useState('')
   const [blockSaving, setBlockSaving] = useState(false)
   const [blockMelding, setBlockMelding] = useState('')
-  const [boekingen, setBoekingen] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [filter, setFilter] = useState('aankomend')
-  const [wagenFilter, setWagenFilter] = useState('alle')
-  const [authLoading, setAuthLoading] = useState(true)
-  const navigate = useNavigate()
 
   useEffect(() => {
     checkAuth()
   }, [])
 
   useEffect(() => {
-    if (!authLoading) fetchAlles()
-  }, [filter, authLoading])
-
-  useEffect(() => {
-    if (!authLoading) fetchBlocks()
+    if (!authLoading) vernieuwen()
   }, [authLoading])
+
+  async function checkAuth() {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) {
+      navigate('/admin/login')
+      return
+    }
+    setAuthLoading(false)
+  }
+
+  function vernieuwen() {
+    fetchBoekingen()
+    fetchBlocks()
+  }
+
+  // Alle boekingen in één keer ophalen; filteren gebeurt in de browser (het gaat om een paar honderd regels).
+  async function fetchBoekingen() {
+    setLoading(true)
+    setError('')
+    const { data, error } = await supabase
+      .from('bookings')
+      .select('*')
+      .order('datum', { ascending: true })
+      .order('van', { ascending: true })
+    if (error) setError('Fout bij ophalen: ' + error.message)
+    else setBoekingen(data || [])
+    setLoading(false)
+  }
 
   async function fetchBlocks() {
     const { data, error } = await supabase
@@ -42,11 +78,17 @@ export default function Admin() {
     else setBlocks(data || [])
   }
 
+  async function verwijderBoeking(id) {
+    const { error } = await supabase.from('bookings').delete().eq('id', id)
+    if (error) setError('Verwijderen mislukt: ' + error.message)
+    else setBoekingen(prev => prev.filter(b => b.id !== id))
+  }
+
   async function blokkeer(e) {
     e.preventDefault()
     setBlockMelding('')
-    if (!blockVan || !blockTot) { setBlockMelding('Vul een van- en tot-datum in.'); return }
-    if (blockTot < blockVan) { setBlockMelding('Einddatum moet op of na de begindatum liggen.'); return }
+    if (!blockVan || !blockTot) { setBlockMelding('Vul een begin- en einddatum in.'); return }
+    if (blockTot < blockVan) { setBlockMelding('De einddatum moet op of na de begindatum liggen.'); return }
 
     setBlockSaving(true)
     const { error } = await supabase.from('vehicle_blocks').insert([{
@@ -55,56 +97,20 @@ export default function Admin() {
     setBlockSaving(false)
     if (error) { setBlockMelding('Blokkeren mislukt: ' + error.message); return }
 
-    // Bestaande boekingen blijven staan; waarschuw de admin zodat die handmatig opgelost worden.
-    const conflicten = boekingen.filter(b => b.wagen === blockWagen && b.datum >= blockVan && b.datum <= blockTot)
-    if (conflicten.length > 0) {
-      setBlockMelding(`Let op: er staan al ${conflicten.length} boeking(en) in deze periode. Die blijven bestaan, verwijder ze zelf en informeer de boekers.`)
-    }
+    // Bestaande boekingen blijven staan; de admin lost ze zelf op en informeert de boekers.
+    const aantal = conflicten({ wagen: blockWagen, van_datum: blockVan, tot_datum: blockTot }).length
+    setBlockMelding(aantal > 0
+      ? `Blokkade opgeslagen. Let op: er staan ${aantal} boeking(en) in deze periode. Die blijven bestaan; verwijder ze zelf en informeer de boekers.`
+      : 'Blokkade opgeslagen.')
     setBlockTot('')
     setBlockReden('')
     fetchBlocks()
   }
 
   async function deblokkeer(id) {
-    if (!confirm('Blokkade opheffen?')) return
     const { error } = await supabase.from('vehicle_blocks').delete().eq('id', id)
-    if (error) alert('Opheffen mislukt: ' + error.message)
+    if (error) setError('Opheffen mislukt: ' + error.message)
     else setBlocks(prev => prev.filter(b => b.id !== id))
-  }
-
-  async function checkAuth() {
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) {
-      navigate('/admin/login')
-    }
-    setAuthLoading(false)
-  }
-
-  async function fetchAlles() {
-    setLoading(true)
-    setError('')
-
-    let query = supabase
-      .from('bookings')
-      .select('*')
-      .order('datum', { ascending: true })
-      .order('van', { ascending: true })
-
-    if (filter === 'aankomend') {
-      query = query.gte('datum', new Date().toISOString().split('T')[0])
-    }
-
-    const { data, error } = await query
-    if (error) setError('Fout bij ophalen: ' + error.message)
-    else setBoekingen(data || [])
-    setLoading(false)
-  }
-
-  async function annuleer(id) {
-    if (!confirm('Boeking verwijderen?')) return
-    const { error } = await supabase.from('bookings').delete().eq('id', id)
-    if (error) alert('Verwijderen mislukt: ' + error.message)
-    else setBoekingen(prev => prev.filter(b => b.id !== id))
   }
 
   async function uitloggen() {
@@ -112,197 +118,239 @@ export default function Admin() {
     navigate('/admin/login')
   }
 
-  const boekingenGefilterd = wagenFilter === 'alle' ? boekingen : boekingen.filter(b => b.wagen === wagenFilter)
+  // Aankomende boekingen die binnen een blokkade vallen
+  function conflicten(block) {
+    return boekingen.filter(b =>
+      b.wagen === block.wagen && b.datum >= block.van_datum && b.datum <= block.tot_datum && b.datum >= today
+    )
+  }
 
-  const grouped = boekingenGefilterd.reduce((acc, b) => {
-    if (!acc[b.datum]) acc[b.datum] = []
-    acc[b.datum].push(b)
-    return acc
-  }, {})
-
-  const today = new Date().toISOString().split('T')[0]
+  function toonConflicten(block) {
+    setTab('boekingen')
+    setPeriode('aankomend')
+    setWagenFilter(block.wagen)
+    setZoek('')
+  }
 
   if (authLoading) return null
 
+  const zoekTerm = zoek.trim().toLowerCase()
+  const gefilterd = boekingen.filter(b =>
+    (periode === 'alle' || (periode === 'aankomend' ? b.datum >= today : b.datum < today)) &&
+    (wagenFilter === 'alle' || b.wagen === wagenFilter) &&
+    (!zoekTerm || b.naam?.toLowerCase().includes(zoekTerm) || b.email?.toLowerCase().includes(zoekTerm))
+  )
+
+  const groepen = []
+  for (const b of gefilterd) {
+    const laatste = groepen[groepen.length - 1]
+    if (laatste && laatste.datum === b.datum) laatste.items.push(b)
+    else groepen.push({ datum: b.datum, items: [b] })
+  }
+  if (periode === 'verleden') groepen.reverse()
+
+  const actieveBlocks = blocks.filter(b => b.van_datum <= today).length
+
   return (
-    <div className="page-container-wide">
-      <div className="page-header">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
-          <div>
-            <h1 className="page-title">Admin</h1>
-            <p className="page-subtitle">Overzicht van alle wagenboeking reserveringen.</p>
-          </div>
-          <button className="btn btn-ghost btn-sm" onClick={uitloggen}>Uitloggen</button>
+    <div className="shell">
+      <header className="page-head">
+        <div>
+          <h1 className="page-title">Beheer</h1>
+          <p className="page-sub">Reserveringen en beschikbaarheid van de bedrijfswagens.</p>
         </div>
-      </div>
-
-      <div className="card" style={{ marginBottom: 24 }}>
-        <h2 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: 12 }}>Auto blokkeren</h2>
-        <form onSubmit={blokkeer} style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <label htmlFor="block-wagen">Auto</label>
-            <select id="block-wagen" value={blockWagen} onChange={e => setBlockWagen(e.target.value)}>
-              {VEHICLES.map(v => (
-                <option key={v.id} value={v.id}>{getVehicleName(v)} · {v.variant} ({v.kenteken})</option>
-              ))}
-            </select>
-          </div>
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <label htmlFor="block-van">Van</label>
-            <input id="block-van" type="date" value={blockVan} onChange={e => setBlockVan(e.target.value)} required />
-          </div>
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <label htmlFor="block-tot">Tot en met</label>
-            <input id="block-tot" type="date" value={blockTot} min={blockVan} onChange={e => setBlockTot(e.target.value)} required />
-          </div>
-          <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 160 }}>
-            <label htmlFor="block-reden">Reden (optioneel)</label>
-            <input id="block-reden" type="text" value={blockReden} placeholder="bijv. onderhoud" onChange={e => setBlockReden(e.target.value)} />
-          </div>
-          <button type="submit" className="btn btn-primary" disabled={blockSaving}>
-            {blockSaving ? 'Bezig...' : 'Blokkeren'}
-          </button>
-        </form>
-        {blockMelding && <div className="alert alert-info" style={{ marginTop: 12 }}>{blockMelding}</div>}
-
-        {blocks.length > 0 && (
-          <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {blocks.map(b => {
-              const v = getVehicle(b.wagen)
-              return (
-                <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: v.kleur, display: 'inline-block' }} />
-                  <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>{getVehicleName(v)} · {v.variant}</span>
-                  <span className="badge badge-red">
-                    {formatDatumKort(b.van_datum)} t/m {formatDatumKort(b.tot_datum)}
-                  </span>
-                  {b.reden && <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>{b.reden}</span>}
-                  <button className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }} onClick={() => deblokkeer(b.id)}>Opheffen</button>
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
-
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
-        <button className={`btn btn-sm ${filter === 'aankomend' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setFilter('aankomend')}>
-          Aankomend
-        </button>
-        <button className={`btn btn-sm ${filter === 'alle' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setFilter('alle')}>
-          Alle boekingen
-        </button>
-        <button className="btn btn-sm btn-ghost" onClick={fetchAlles} style={{ marginLeft: 'auto' }}>
-          ↻ Vernieuwen
-        </button>
-      </div>
-
-      <div style={{ display: 'flex', gap: 8, marginBottom: 24, flexWrap: 'wrap' }}>
-        <button
-          className="btn btn-sm"
-          onClick={() => setWagenFilter('alle')}
-          style={{
-            border: wagenFilter === 'alle' ? '1.5px solid var(--text)' : '1.5px solid var(--border)',
-            background: wagenFilter === 'alle' ? 'var(--text)' : 'var(--surface)',
-            color: wagenFilter === 'alle' ? '#fff' : 'var(--text)',
-          }}
-        >
-          Alle auto's
-        </button>
-        {VEHICLES.map(v => {
-          const actief = wagenFilter === v.id
-          return (
-            <button
-              key={v.id}
-              className="btn btn-sm"
-              onClick={() => setWagenFilter(v.id)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                border: actief ? `1.5px solid ${v.kleur}` : '1.5px solid var(--border)',
-                background: actief ? `${v.kleur}14` : 'var(--surface)',
-                color: actief ? v.kleur : 'var(--text)',
-                fontWeight: actief ? 700 : 500,
-              }}
-            >
-              <span style={{ width: 8, height: 8, borderRadius: '50%', background: v.kleur, display: 'inline-block' }} />
-              {v.variant}
-            </button>
-          )
-        })}
-      </div>
-
-      {error && <div className="alert alert-error">{error}</div>}
-
-      {loading && <div className="empty-state"><p>Laden...</p></div>}
-
-      {!loading && Object.keys(grouped).length === 0 && (
-        <div className="card">
-          <div className="empty-state">
-            <div className="empty-state-icon">📋</div>
-            <p>Geen boekingen gevonden.</p>
-          </div>
+        <div className="row">
+          <button type="button" className="btn btn-secondary btn-sm" onClick={vernieuwen}><Refresh /> Vernieuwen</button>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={uitloggen}>Uitloggen</button>
         </div>
+      </header>
+
+      <div className="tabs" role="tablist">
+        <button type="button" role="tab" aria-selected={tab === 'boekingen'} className={`tab${tab === 'boekingen' ? ' is-active' : ''}`} onClick={() => setTab('boekingen')}>
+          Boekingen <span className="tab-count num">{boekingen.filter(b => b.datum >= today).length}</span>
+        </button>
+        <button type="button" role="tab" aria-selected={tab === 'blokkades'} className={`tab${tab === 'blokkades' ? ' is-active' : ''}`} onClick={() => setTab('blokkades')}>
+          Blokkades <span className="tab-count num">{blocks.length}</span>
+        </button>
+      </div>
+
+      {error && <div className="notice notice-error">{error}</div>}
+
+      {tab === 'boekingen' && (
+        <>
+          <div className="panel">
+            <div className="panel-head">
+              <h2 className="panel-title"><span className="cap">{formatDatumLang(dag)}</span></h2>
+              <div className="cal-nav">
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setDag(today)} disabled={dag === today}>Vandaag</button>
+                <button type="button" className="btn btn-ghost btn-sm btn-icon" onClick={() => setDag(addDays(dag, -1))} aria-label="Vorige dag"><ChevronLeft /></button>
+                <button type="button" className="btn btn-ghost btn-sm btn-icon" onClick={() => setDag(addDays(dag, 1))} aria-label="Volgende dag"><ChevronRight /></button>
+              </div>
+            </div>
+            <div className="panel-body">
+              <DayTimeline date={dag} bookings={boekingen} blocks={blocks} />
+            </div>
+          </div>
+
+          <div className="panel">
+            <div className="toolbar">
+              <input
+                className="input input-sm"
+                type="search"
+                placeholder="Zoek op naam of e-mail"
+                value={zoek}
+                onChange={e => setZoek(e.target.value)}
+                aria-label="Zoeken"
+              />
+              <select className="select select-sm" value={periode} onChange={e => setPeriode(e.target.value)} aria-label="Periode">
+                <option value="aankomend">Aankomend</option>
+                <option value="verleden">Verleden</option>
+                <option value="alle">Alle boekingen</option>
+              </select>
+              <select className="select select-sm" value={wagenFilter} onChange={e => setWagenFilter(e.target.value)} aria-label="Auto">
+                <option value="alle">Alle auto's</option>
+                {VEHICLES.map(v => <option key={v.id} value={v.id}>{getVehicleName(v)} · {v.variant}</option>)}
+              </select>
+              <span className="toolbar-spacer" />
+              <span className="muted num" style={{ fontSize: '0.84rem' }}>
+                {gefilterd.length} {gefilterd.length === 1 ? 'boeking' : 'boekingen'}
+              </span>
+            </div>
+
+            {loading && <div className="empty">Laden…</div>}
+            {!loading && gefilterd.length === 0 && <div className="empty">Geen boekingen gevonden.</div>}
+
+            {!loading && gefilterd.length > 0 && (
+              <div className="table-wrap">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Tijd</th>
+                      <th>Auto</th>
+                      <th>Naam</th>
+                      <th className="hide-sm">E-mail</th>
+                      <th className="hide-sm">Geboekt op</th>
+                      <th className="actions"><span className="hide-sm">Actie</span></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {groepen.map(g => [
+                      <tr key={`g-${g.datum}`} className="group-row">
+                        <td colSpan={6}>
+                          <span className="cap">{formatDatumLang(g.datum)}</span>
+                          {g.datum === today && <span className="tag tag-green" style={{ marginLeft: 8 }}>Vandaag</span>}
+                        </td>
+                      </tr>,
+                      ...g.items.map(b => (
+                        <tr key={b.id}>
+                          <td className="num" style={{ whiteSpace: 'nowrap' }}>
+                            {b.van ? `${formatTijd(b.van)}–${formatTijd(b.tot)}` : b.tijdslot}
+                          </td>
+                          <td><VehicleLabel vehicle={getVehicle(b.wagen)} /></td>
+                          <td className="strong">{b.naam}</td>
+                          <td className="muted hide-sm">{b.email || '—'}</td>
+                          <td className="muted num hide-sm">{new Date(b.created_at).toLocaleDateString('nl-NL')}</td>
+                          <td className="actions">
+                            <ConfirmButton onConfirm={() => verwijderBoeking(b.id)}>Verwijderen</ConfirmButton>
+                          </td>
+                        </tr>
+                      )),
+                    ])}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </>
       )}
 
-      {!loading && Object.entries(grouped).map(([datum, items]) => (
-        <div key={datum} style={{ marginBottom: 24 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-            <span style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--dark)' }}>
-              {formatDatum(datum)}
-            </span>
-            {datum === today && <span className="badge badge-green">Vandaag</span>}
-            {datum < today && <span className="badge badge-gray">Verleden</span>}
+      {tab === 'blokkades' && (
+        <>
+          <div className="panel">
+            <div className="panel-head">
+              <h2 className="panel-title">Nieuwe blokkade</h2>
+              <span className="muted" style={{ fontSize: '0.84rem' }}>De auto is dan op die dagen niet te reserveren.</span>
+            </div>
+            <form className="panel-body" onSubmit={blokkeer}>
+              <div className="form-grid">
+                <label className="field">
+                  <span className="field-label">Auto</span>
+                  <select className="select" value={blockWagen} onChange={e => setBlockWagen(e.target.value)}>
+                    {VEHICLES.map(v => (
+                      <option key={v.id} value={v.id}>{getVehicleName(v)} · {v.variant} ({v.kenteken})</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span className="field-label">Van</span>
+                  <input className="input" type="date" value={blockVan} onChange={e => setBlockVan(e.target.value)} required />
+                </label>
+                <label className="field">
+                  <span className="field-label">Tot en met</span>
+                  <input className="input" type="date" value={blockTot} min={blockVan} onChange={e => setBlockTot(e.target.value)} required />
+                </label>
+                <label className="field">
+                  <span className="field-label">Reden (optioneel)</span>
+                  <input className="input" type="text" value={blockReden} placeholder="Bijv. onderhoud" onChange={e => setBlockReden(e.target.value)} />
+                </label>
+                <button type="submit" className="btn btn-primary" disabled={blockSaving}>
+                  {blockSaving ? 'Bezig…' : 'Blokkeren'}
+                </button>
+              </div>
+              {blockMelding && <div className="notice notice-info" style={{ marginTop: 16, marginBottom: 0 }}>{blockMelding}</div>}
+            </form>
           </div>
 
-          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Auto</th>
-                  <th>Tijdslot</th>
-                  <th>Naam</th>
-                  <th>E-mail</th>
-                  <th>Geboekt op</th>
-                  <th style={{ textAlign: 'right' }}>Actie</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map(b => {
-                  const v = getVehicle(b.wagen)
-                  return (
-                    <tr key={b.id}>
-                      <td>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                          <span style={{ width: 8, height: 8, borderRadius: '50%', background: v.kleur, display: 'inline-block', flexShrink: 0 }} />
-                          <div>
-                            <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text)', lineHeight: 1.3 }}>
-                              {getVehicleName(v)} <span style={{ color: v.kleur }}>· {v.variant}</span>
-                            </div>
-                            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
-                              {v.kenteken}
-                            </div>
-                          </div>
-                        </div>
-                      </td>
-                      <td>
-                        <span className="badge" style={{ background: `${v.kleur}14`, color: v.kleur, border: `1px solid ${v.kleur}33` }}>
-                          {b.van ? `${b.van.slice(0,5)} – ${b.tot.slice(0,5)}` : b.tijdslot}
-                        </span>
-                      </td>
-                      <td style={{ fontWeight: 600 }}>{b.naam}</td>
-                      <td style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>{b.email || '—'}</td>
-                      <td style={{ color: 'var(--text-muted)' }}>{new Date(b.created_at).toLocaleDateString('nl-NL')}</td>
-                      <td style={{ textAlign: 'right' }}>
-                        <button className="btn btn-danger btn-sm" onClick={() => annuleer(b.id)}>Verwijder</button>
-                      </td>
+          <div className="panel">
+            <div className="panel-head">
+              <h2 className="panel-title">Actieve en geplande blokkades</h2>
+              <span className="muted num" style={{ fontSize: '0.84rem' }}>{actieveBlocks} actief</span>
+            </div>
+            {blocks.length === 0 ? (
+              <div className="empty">Er zijn geen blokkades. Alle auto's zijn te reserveren.</div>
+            ) : (
+              <div className="table-wrap">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Auto</th>
+                      <th>Periode</th>
+                      <th className="hide-sm">Reden</th>
+                      <th>Status</th>
+                      <th className="hide-sm">Boekingen in periode</th>
+                      <th className="actions"><span className="hide-sm">Actie</span></th>
                     </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+                  </thead>
+                  <tbody>
+                    {blocks.map(b => {
+                      const aantal = conflicten(b).length
+                      return (
+                        <tr key={b.id}>
+                          <td><VehicleLabel vehicle={getVehicle(b.wagen)} plate /></td>
+                          <td className="num" style={{ whiteSpace: 'nowrap' }}>{formatDag(b.van_datum)} t/m {formatDag(b.tot_datum)}</td>
+                          <td className="muted hide-sm">{b.reden || '—'}</td>
+                          <td>
+                            {b.van_datum <= today
+                              ? <span className="tag tag-red">Actief</span>
+                              : <span className="tag">Gepland</span>}
+                          </td>
+                          <td className="hide-sm">
+                            {aantal > 0
+                              ? <button type="button" className="tag tag-amber" onClick={() => toonConflicten(b)}>{aantal} bekijken</button>
+                              : <span className="muted">Geen</span>}
+                          </td>
+                          <td className="actions">
+                            <ConfirmButton onConfirm={() => deblokkeer(b.id)}>Opheffen</ConfirmButton>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
-        </div>
-      ))}
+        </>
+      )}
     </div>
   )
 }

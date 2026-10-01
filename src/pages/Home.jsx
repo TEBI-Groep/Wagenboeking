@@ -2,8 +2,17 @@ import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { VEHICLES, getVehicle, getVehicleName, getBlock } from '../lib/vehicles'
-import { getTodayString, formatDatumKort } from '../lib/date'
+import { getTodayString, formatDatumLang, formatDatumKort, formatDag, formatTijd } from '../lib/date'
 import MonthCalendar from '../components/MonthCalendar'
+import DayTimeline from '../components/DayTimeline'
+import Plate from '../components/Plate'
+import { Check } from '../components/Icons'
+
+const PRESETS = [
+  { label: 'Ochtend', van: '08:00', tot: '12:00' },
+  { label: 'Middag', van: '12:00', tot: '17:00' },
+  { label: 'Hele dag', van: '08:00', tot: '17:00' },
+]
 
 export default function Home() {
   const [user, setUser] = useState(null)
@@ -12,16 +21,18 @@ export default function Home() {
   const [van, setVan] = useState('08:00')
   const [tot, setTot] = useState('12:00')
   const [loading, setLoading] = useState(false)
-  const [success, setSuccess] = useState(false)
+  const [bevestiging, setBevestiging] = useState(null)
   const [error, setError] = useState('')
   const [allBookings, setAllBookings] = useState([])
   const [blocks, setBlocks] = useState([])
   const navigate = useNavigate()
+  const today = getTodayString()
 
   const fetchBookings = useCallback(async () => {
     const { data } = await supabase
       .from('bookings')
-      .select('naam, datum, van, tot, wagen')
+      .select('id, naam, datum, van, tot, wagen')
+      .gte('datum', getTodayString())
       .order('datum', { ascending: true })
     if (data) setAllBookings(data)
   }, [])
@@ -49,29 +60,26 @@ export default function Home() {
     if (vrij) setWagen(vrij.id)
   }, [blocks, datum, wagen])
 
+  const vehicle = getVehicle(wagen)
+  const dagBoekingen = allBookings.filter(b => b.datum === datum)
+  const tijdFout = !!van && !!tot && van >= tot
+  const overlap = !tijdFout && dagBoekingen.find(b =>
+    b.wagen === wagen && van < formatTijd(b.tot) && tot > formatTijd(b.van)
+  )
+  const geblokkeerd = !!getBlock(blocks, wagen, datum)
+
   async function handleSubmit(e) {
     e.preventDefault()
     setError('')
-    setSuccess(false)
+    setBevestiging(null)
 
-    if (!datum || !van || !tot) {
-      setError('Vul alle velden in.')
-      return
-    }
-
-    if (van >= tot) {
-      setError('Eindtijd moet na de begintijd liggen.')
-      return
-    }
-
-    if (getBlock(blocks, wagen, datum)) {
-      setError(`${getVehicleName(getVehicle(wagen))} (${getVehicle(wagen).variant}) is op deze datum niet beschikbaar. Kies een andere auto of datum.`)
-      return
-    }
+    if (!datum || !van || !tot) { setError('Vul alle velden in.'); return }
+    if (tijdFout) { setError('De eindtijd moet na de begintijd liggen.'); return }
+    if (geblokkeerd) { setError(`${getVehicleName(vehicle)} (${vehicle.variant}) is op deze datum niet beschikbaar.`); return }
 
     setLoading(true)
 
-    // Check overlappende boekingen op die datum, voor dezelfde wagen
+    // Opnieuw controleren op de server: iemand anders kan net geboekt hebben
     const { data: bestaand, error: checkError } = await supabase
       .from('bookings')
       .select('van, tot, naam')
@@ -79,20 +87,20 @@ export default function Home() {
       .eq('wagen', wagen)
 
     if (checkError) {
-      setError('Er is een fout opgetreden. Probeer opnieuw.')
+      setError('Er is een fout opgetreden. Probeer het opnieuw.')
       setLoading(false)
       return
     }
 
-    const overlap = bestaand?.find(b => van < b.tot && tot > b.van)
-    if (overlap) {
-      setError(`${getVehicleName(getVehicle(wagen))} (${getVehicle(wagen).variant}) is al geboekt van ${overlap.van.slice(0,5)} tot ${overlap.tot.slice(0,5)} door ${overlap.naam}. Kies een ander tijdslot of een andere auto.`)
+    const conflict = bestaand?.find(b => van < formatTijd(b.tot) && tot > formatTijd(b.van))
+    if (conflict) {
+      setError(`${getVehicleName(vehicle)} (${vehicle.variant}) is al gereserveerd van ${formatTijd(conflict.van)} tot ${formatTijd(conflict.tot)} door ${conflict.naam}.`)
       setLoading(false)
+      fetchBookings()
       return
     }
 
     const tijdslot = `${van} – ${tot}`
-
     const { error: insertError } = await supabase
       .from('bookings')
       .insert([{ naam: user.naam, email: user.email, datum, tijdslot, van, tot, wagen }])
@@ -104,168 +112,173 @@ export default function Home() {
     }
 
     try {
-      const mailRes = await fetch('/api/send-confirmation', {
+      await fetch('/api/send-confirmation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ naam: user.naam, email: user.email, datum, tijdslot, wagen: `${getVehicleName(getVehicle(wagen))} – ${getVehicle(wagen).variant} (${getVehicle(wagen).kenteken})` })
+        body: JSON.stringify({
+          naam: user.naam, email: user.email, datum, tijdslot,
+          wagen: `${getVehicleName(vehicle)} – ${vehicle.variant} (${vehicle.kenteken})`,
+        }),
       })
-      const mailData = await mailRes.json()
-      console.log('Mail response:', mailData)
     } catch (mailErr) {
       console.warn('Mail kon niet worden verstuurd:', mailErr)
     }
 
-    setSuccess(true)
-    setVan('08:00')
-    setTot('12:00')
+    setBevestiging({ wagen, datum, van, tot, email: user.email })
     setLoading(false)
     fetchBookings()
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  function uitloggen() {
+  function wijzigGebruiker() {
     localStorage.removeItem('tebi_user')
     navigate('/start')
   }
 
   if (!user) return null
 
+  const bevestigdeWagen = bevestiging && getVehicle(bevestiging.wagen)
+
   return (
-    <div className="page-container-wide">
-      <div className="page-header">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
-          <div>
-            <h1 className="page-title">Bedrijfswagen boeken</h1>
-            <p className="page-subtitle">Reserveer de bedrijfswagen voor een datum en tijdslot.</p>
-          </div>
-          <div className="user-chip">
-            <div style={{ textAlign: 'right' }}>
-              <div style={{ fontSize: '0.875rem', fontWeight: 600 }}>{user.naam}</div>
-              <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{user.email}</div>
-            </div>
-            <button className="btn btn-ghost btn-sm" onClick={uitloggen}>Wijzig</button>
+    <div className="shell">
+      <header className="page-head">
+        <div>
+          <h1 className="page-title">Auto reserveren</h1>
+          <p className="page-sub">Kies een auto, een dag en een tijdvak.</p>
+        </div>
+        <div className="who">
+          <div className="who-name">{user.naam}</div>
+          <div className="who-mail">
+            {user.email} · <button type="button" className="link" onClick={wijzigGebruiker}>Wijzigen</button>
           </div>
         </div>
-      </div>
+      </header>
 
-      {success && (
-        <div className="alert alert-success">
-          ✓ Boeking voor <strong>{getVehicleName(getVehicle(wagen))}</strong> ({getVehicle(wagen).variant}) geplaatst! Je ontvangt een bevestiging op <strong>{user.email}</strong>.
+      {bevestiging && (
+        <div className="notice notice-success">
+          <strong>Reservering geplaatst.</strong>{' '}
+          {getVehicleName(bevestigdeWagen)} · {bevestigdeWagen.variant}, {formatDatumLang(bevestiging.datum)} van {bevestiging.van} tot {bevestiging.tot}.
+          De bevestiging is verstuurd naar {bevestiging.email}.
         </div>
       )}
-      {error && <div className="alert alert-error">{error}</div>}
+      {error && <div className="notice notice-error">{error}</div>}
 
-      {/* Vehicle picker: grote kaarten met ruimte voor een foto */}
-      <div className="form-group" style={{ marginBottom: 24 }}>
-        <label>Kies een auto</label>
+      <section className="section">
+        <h2 className="section-title"><span className="step">1</span>Auto</h2>
         <div className="vehicle-grid">
           {VEHICLES.map(v => {
             const block = getBlock(blocks, v.id, datum)
-            const actief = wagen === v.id && !block
+            const aantal = dagBoekingen.filter(b => b.wagen === v.id).length
+            const selected = wagen === v.id && !block
             return (
               <button
                 type="button"
                 key={v.id}
                 onClick={() => setWagen(v.id)}
                 disabled={!!block}
-                className="vehicle-card"
-                style={{
-                  border: actief ? `2px solid ${v.kleur}` : '2px solid var(--border)',
-                  boxShadow: actief ? `0 4px 16px ${v.kleur}26` : 'var(--shadow-sm)',
-                  ...(block ? { opacity: 0.5, filter: 'grayscale(1)', cursor: 'not-allowed' } : {}),
-                }}
+                aria-pressed={selected}
+                className={`vehicle${selected ? ' is-selected' : ''}${block ? ' is-blocked' : ''}`}
+                title={block?.reden ? `Niet beschikbaar: ${block.reden}` : undefined}
               >
-                <div className="vehicle-card-photo" style={{ background: v.foto ? `center / cover no-repeat url(${v.foto})` : `linear-gradient(135deg, ${v.kleur}22, ${v.kleur}0a)` }}>
-                  {!v.foto && (
-                    <svg width="44" height="44" viewBox="0 0 24 24" fill="none" style={{ opacity: 0.55 }}>
-                      <path d="M3 12l1.5-4.5A2 2 0 0 1 6.4 6h11.2a2 2 0 0 1 1.9 1.5L21 12" stroke={v.kleur} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
-                      <rect x="2" y="12" width="20" height="6" rx="1.5" stroke={v.kleur} strokeWidth="1.6"/>
-                      <circle cx="7" cy="18.5" r="1.6" fill={v.kleur}/>
-                      <circle cx="17" cy="18.5" r="1.6" fill={v.kleur}/>
-                    </svg>
-                  )}
-                  {actief && (
-                    <span className="vehicle-card-check" style={{ background: v.kleur }}>✓</span>
-                  )}
+                <div className="vehicle-photo">
+                  {v.foto && <img src={v.foto} alt="" loading="lazy" />}
+                  <span className="vehicle-radio">{selected && <Check />}</span>
+                  {block && <span className="vehicle-flag">Niet beschikbaar t/m {formatDag(block.tot_datum)}</span>}
                 </div>
-                <div className="vehicle-card-info">
-                  <div style={{ fontWeight: 700, fontSize: '0.92rem', color: actief ? v.kleur : 'var(--text)' }}>
-                    {v.merk} {v.model}
-                  </div>
-                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                <div className="vehicle-body">
+                  <div className="vehicle-name">{getVehicleName(v)}</div>
+                  <div className="vehicle-variant">
+                    <span className="dot" style={{ background: v.kleur }} />
                     {v.variant}
                   </div>
-                  <div style={{ fontSize: '0.72rem', color: 'var(--text-light)', fontFamily: 'monospace', marginTop: 4 }}>
-                    {v.kenteken}
+                  <div className="vehicle-meta">
+                    <Plate kenteken={v.kenteken} />
+                    {!block && (aantal === 0
+                      ? <span className="tag tag-green">Vrij</span>
+                      : <span className="tag">{aantal} {aantal === 1 ? 'reservering' : 'reserveringen'}</span>
+                    )}
                   </div>
-                  {block && (
-                    <div style={{ fontSize: '0.74rem', fontWeight: 700, color: 'var(--danger)', marginTop: 6 }}>
-                      Niet beschikbaar t/m {formatDatumKort(block.tot_datum)}
-                      {block.reden ? ` (${block.reden})` : ''}
-                    </div>
-                  )}
                 </div>
               </button>
             )
           })}
         </div>
-      </div>
+      </section>
 
-      <div className="booking-layout">
-        <div>
-          <div className="card">
-            <form onSubmit={handleSubmit}>
-              <div className="form-group">
-                <label htmlFor="datum">Datum</label>
-                <input
-                  id="datum"
-                  type="date"
-                  value={datum}
-                  min={getTodayString()}
-                  onChange={e => setDatum(e.target.value)}
-                  required
+      <div className="booking-grid">
+        <section>
+          <h2 className="section-title"><span className="step">2</span>Dag</h2>
+          <MonthCalendar
+            bookings={allBookings}
+            selectedDate={datum}
+            onSelectDate={setDatum}
+            isDisabled={d => d < today || !!getBlock(blocks, wagen, d)}
+            isBlocked={d => !!getBlock(blocks, wagen, d)}
+          />
+        </section>
+
+        <section>
+          <h2 className="section-title"><span className="step">3</span>Tijd</h2>
+          <form className="panel" onSubmit={handleSubmit}>
+            <div className="panel-body stack">
+              <div className="field">
+                <span className="field-label">Tijdvak</span>
+                <div className="segmented segmented-fill">
+                  {PRESETS.map(p => (
+                    <button
+                      type="button"
+                      key={p.label}
+                      className={van === p.van && tot === p.tot ? 'is-active' : ''}
+                      onClick={() => { setVan(p.van); setTot(p.tot) }}
+                    >
+                      {p.label} <span className="muted num">{p.van}–{p.tot}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="field-row">
+                <label className="field">
+                  <span className="field-label">Van</span>
+                  <input className="input num" type="time" value={van} onChange={e => setVan(e.target.value)} required />
+                </label>
+                <label className="field">
+                  <span className="field-label">Tot</span>
+                  <input className="input num" type="time" value={tot} onChange={e => setTot(e.target.value)} required />
+                </label>
+              </div>
+
+              <div className="field">
+                <span className="field-label">Bezetting op {formatDatumKort(datum)}</span>
+                <DayTimeline
+                  date={datum}
+                  bookings={allBookings}
+                  blocks={blocks}
+                  selectedWagen={wagen}
+                  selection={tijdFout ? null : { van, tot, conflict: !!overlap }}
                 />
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 24 }}>
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label htmlFor="van">Van</label>
-                  <input
-                    id="van"
-                    type="time"
-                    value={van}
-                    onChange={e => setVan(e.target.value)}
-                    required
-                  />
+              {tijdFout && <div className="notice notice-error">De eindtijd moet na de begintijd liggen.</div>}
+              {overlap && (
+                <div className="notice notice-warn">
+                  Overlapt met de reservering van {overlap.naam} ({formatTijd(overlap.van)}–{formatTijd(overlap.tot)}).
+                  Kies een ander tijdvak of een andere auto.
                 </div>
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label htmlFor="tot">Tot</label>
-                  <input
-                    id="tot"
-                    type="time"
-                    value={tot}
-                    onChange={e => setTot(e.target.value)}
-                    required
-                  />
-                </div>
+              )}
+            </div>
+
+            <div className="panel-foot">
+              <div>
+                <div className="summary-main">{getVehicleName(vehicle)} · {vehicle.variant}</div>
+                <div className="summary-sub num">{formatDatumLang(datum)}, {van}–{tot}</div>
               </div>
-
-              <button type="submit" className="btn btn-primary btn-full" disabled={loading}>
-                {loading ? 'Bezig met opslaan...' : 'Boeking plaatsen →'}
+              <button type="submit" className="btn btn-primary" disabled={loading || tijdFout || !!overlap || geblokkeerd}>
+                {loading ? 'Bezig met opslaan…' : 'Reserveren'}
               </button>
-            </form>
-
-            <div className="divider" />
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
-              Overlappende boekingen worden automatisch geblokkeerd.
-            </p>
-          </div>
-        </div>
-
-        <MonthCalendar
-          bookings={allBookings}
-          selectedDate={datum}
-          onSelectDate={setDatum}
-        />
+            </div>
+          </form>
+        </section>
       </div>
     </div>
   )
