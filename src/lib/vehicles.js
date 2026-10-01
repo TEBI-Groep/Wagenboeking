@@ -13,6 +13,11 @@ export function getVehicle(id) {
   return VEHICLES.find(v => v.id === id) || VEHICLES[0]
 }
 
+// Geeft de blokkade terug die voor deze wagen op deze datum (YYYY-MM-DD) geldt, of undefined.
+export function getBlock(blocks, wagenId, datum) {
+  return blocks.find(b => b.wagen === wagenId && datum >= b.van_datum && datum <= b.tot_datum)
+}
+
 // Hoofdnaam voor op kaarten/badges, bijv. "Citroën Berlingo" of "Mercedes EQV"
 export function getVehicleName(v) {
   return `${v.merk} ${v.model}`

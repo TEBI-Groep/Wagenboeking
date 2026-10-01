@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { VEHICLES, getVehicle, getVehicleName } from '../lib/vehicles'
-import { getTodayString } from '../lib/date'
+import { VEHICLES, getVehicle, getVehicleName, getBlock } from '../lib/vehicles'
+import { getTodayString, formatDatumKort } from '../lib/date'
 import MonthCalendar from '../components/MonthCalendar'
 
 export default function Home() {
@@ -15,6 +15,7 @@ export default function Home() {
   const [success, setSuccess] = useState(false)
   const [error, setError] = useState('')
   const [allBookings, setAllBookings] = useState([])
+  const [blocks, setBlocks] = useState([])
   const navigate = useNavigate()
 
   const fetchBookings = useCallback(async () => {
@@ -25,12 +26,28 @@ export default function Home() {
     if (data) setAllBookings(data)
   }, [])
 
+  const fetchBlocks = useCallback(async () => {
+    const { data } = await supabase
+      .from('vehicle_blocks')
+      .select('wagen, van_datum, tot_datum, reden')
+      .gte('tot_datum', getTodayString())
+    if (data) setBlocks(data)
+  }, [])
+
   useEffect(() => {
     const opgeslagen = localStorage.getItem('tebi_user')
     if (!opgeslagen) navigate('/start')
     else setUser(JSON.parse(opgeslagen))
     fetchBookings()
+    fetchBlocks()
   }, [])
+
+  // Staat de gekozen auto op de gekozen datum geblokkeerd, schuif dan door naar de eerste beschikbare.
+  useEffect(() => {
+    if (!getBlock(blocks, wagen, datum)) return
+    const vrij = VEHICLES.find(v => !getBlock(blocks, v.id, datum))
+    if (vrij) setWagen(vrij.id)
+  }, [blocks, datum, wagen])
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -44,6 +61,11 @@ export default function Home() {
 
     if (van >= tot) {
       setError('Eindtijd moet na de begintijd liggen.')
+      return
+    }
+
+    if (getBlock(blocks, wagen, datum)) {
+      setError(`${getVehicleName(getVehicle(wagen))} (${getVehicle(wagen).variant}) is op deze datum niet beschikbaar. Kies een andere auto of datum.`)
       return
     }
 
@@ -137,16 +159,19 @@ export default function Home() {
         <label>Kies een auto</label>
         <div className="vehicle-grid">
           {VEHICLES.map(v => {
-            const actief = wagen === v.id
+            const block = getBlock(blocks, v.id, datum)
+            const actief = wagen === v.id && !block
             return (
               <button
                 type="button"
                 key={v.id}
                 onClick={() => setWagen(v.id)}
+                disabled={!!block}
                 className="vehicle-card"
                 style={{
                   border: actief ? `2px solid ${v.kleur}` : '2px solid var(--border)',
                   boxShadow: actief ? `0 4px 16px ${v.kleur}26` : 'var(--shadow-sm)',
+                  ...(block ? { opacity: 0.5, filter: 'grayscale(1)', cursor: 'not-allowed' } : {}),
                 }}
               >
                 <div className="vehicle-card-photo" style={{ background: v.foto ? `center / cover no-repeat url(${v.foto})` : `linear-gradient(135deg, ${v.kleur}22, ${v.kleur}0a)` }}>
@@ -172,6 +197,12 @@ export default function Home() {
                   <div style={{ fontSize: '0.72rem', color: 'var(--text-light)', fontFamily: 'monospace', marginTop: 4 }}>
                     {v.kenteken}
                   </div>
+                  {block && (
+                    <div style={{ fontSize: '0.74rem', fontWeight: 700, color: 'var(--danger)', marginTop: 6 }}>
+                      Niet beschikbaar t/m {formatDatumKort(block.tot_datum)}
+                      {block.reden ? ` (${block.reden})` : ''}
+                    </div>
+                  )}
                 </div>
               </button>
             )
