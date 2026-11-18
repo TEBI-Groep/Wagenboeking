@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../lib/auth'
 import { VEHICLES, getVehicle, getBlock } from '../lib/vehicles'
 import { getTodayString, startOfWeek, addDays, weekNumber, formatDag, formatKort, formatTijd } from '../lib/date'
 import VehicleLabel from '../components/VehicleLabel'
@@ -9,7 +10,8 @@ import { ChevronLeft, ChevronRight } from '../components/Icons'
 
 export default function MijnBoekingen() {
   const today = getTodayString()
-  const [user, setUser] = useState(null)
+  const auth = useAuth()
+  const user = { naam: auth.profiel.naam, email: auth.email }
   const [mijn, setMijn] = useState([])
   const [week, setWeek] = useState([])
   const [blocks, setBlocks] = useState([])
@@ -20,11 +22,7 @@ export default function MijnBoekingen() {
   const weekEnd = addDays(weekStart, 6)
 
   useEffect(() => {
-    const opgeslagen = localStorage.getItem('tebi_user')
-    if (!opgeslagen) return
-    const u = JSON.parse(opgeslagen)
-    setUser(u)
-    fetchMijn(u)
+    fetchMijn(user)
   }, [])
 
   useEffect(() => {
@@ -73,7 +71,9 @@ export default function MijnBoekingen() {
       <header className="page-head">
         <div>
           <h1 className="page-title">Mijn boekingen</h1>
-          <p className="page-sub">Je eigen reserveringen en de planning van alle auto's.</p>
+          <p className="page-sub num">
+            Week {weekNumber(weekStart)}: {week.length} {week.length === 1 ? 'reservering' : 'reserveringen'} op {VEHICLES.length} auto's
+          </p>
         </div>
       </header>
 
@@ -132,7 +132,7 @@ export default function MijnBoekingen() {
               <div key={dag} className={cls}>
                 <div className="day-label">
                   {formatDag(dag)}
-                  {dag === today && <span className="tag tag-green">Vandaag</span>}
+                  {dag === today && <span>· vandaag</span>}
                 </div>
                 <div className="day-items">
                   {dagBlocks.map(([v, b]) => (

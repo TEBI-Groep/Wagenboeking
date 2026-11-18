@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { useAuth, uitloggen } from '../lib/auth'
 import { VEHICLES, getVehicle, getVehicleName, getBlock } from '../lib/vehicles'
 import { getTodayString, formatDatumLang, formatDatumKort, formatDag, formatTijd } from '../lib/date'
 import MonthCalendar from '../components/MonthCalendar'
@@ -15,7 +16,8 @@ const PRESETS = [
 ]
 
 export default function Home() {
-  const [user, setUser] = useState(null)
+  const auth = useAuth()
+  const user = { naam: auth.profiel.naam, email: auth.email }
   const [wagen, setWagen] = useState(VEHICLES[0].id)
   const [datum, setDatum] = useState(getTodayString())
   const [van, setVan] = useState('08:00')
@@ -46,9 +48,6 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
-    const opgeslagen = localStorage.getItem('tebi_user')
-    if (!opgeslagen) navigate('/start')
-    else setUser(JSON.parse(opgeslagen))
     fetchBookings()
     fetchBlocks()
   }, [])
@@ -67,6 +66,9 @@ export default function Home() {
     b.wagen === wagen && van < formatTijd(b.tot) && tot > formatTijd(b.van)
   )
   const geblokkeerd = !!getBlock(blocks, wagen, datum)
+  const vrijeWagens = VEHICLES.filter(v =>
+    !getBlock(blocks, v.id, datum) && !dagBoekingen.some(b => b.wagen === v.id)
+  ).length
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -101,9 +103,12 @@ export default function Home() {
     }
 
     const tijdslot = `${van} – ${tot}`
-    const { error: insertError } = await supabase
+    // E-mail en naam worden in de database overschreven met die van de ingelogde gebruiker.
+    const { data: nieuw, error: insertError } = await supabase
       .from('bookings')
       .insert([{ naam: user.naam, email: user.email, datum, tijdslot, van, tot, wagen }])
+      .select('id')
+      .single()
 
     if (insertError) {
       setError('Opslaan mislukt: ' + insertError.message)
@@ -111,33 +116,29 @@ export default function Home() {
       return
     }
 
+    // Bevestigingsmail: de server haalt de boeking zelf op en mailt alleen naar de ingelogde boeker.
+    let mailOk = false
     try {
-      await fetch('/api/send-confirmation', {
+      const r = await fetch('/api/send-confirmation', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          naam: user.naam, email: user.email, datum, tijdslot,
-          wagen: `${getVehicleName(vehicle)} – ${vehicle.variant} (${vehicle.kenteken})`,
-          wagenNaam: `${getVehicleName(vehicle)} · ${vehicle.variant}`,
-          kenteken: vehicle.kenteken,
-        }),
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${auth.session.access_token}` },
+        body: JSON.stringify({ bookingId: nieuw.id }),
       })
+      mailOk = r.ok
     } catch (mailErr) {
       console.warn('Mail kon niet worden verstuurd:', mailErr)
     }
 
-    setBevestiging({ wagen, datum, van, tot, email: user.email })
+    setBevestiging({ wagen, datum, van, tot, email: user.email, mailOk })
     setLoading(false)
     fetchBookings()
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  function wijzigGebruiker() {
-    localStorage.removeItem('tebi_user')
+  async function wijzigGebruiker() {
+    await uitloggen()
     navigate('/start')
   }
-
-  if (!user) return null
 
   const bevestigdeWagen = bevestiging && getVehicle(bevestiging.wagen)
 
@@ -146,12 +147,14 @@ export default function Home() {
       <header className="page-head">
         <div>
           <h1 className="page-title">Auto reserveren</h1>
-          <p className="page-sub">Kies een auto, een dag en een tijdvak.</p>
+          <p className="page-sub">
+            <span className="cap">{formatDatumKort(datum)}</span>: {vrijeWagens} van {VEHICLES.length} auto's de hele dag vrij
+          </p>
         </div>
         <div className="who">
           <div className="who-name">{user.naam}</div>
           <div className="who-mail">
-            {user.email} · <button type="button" className="link" onClick={wijzigGebruiker}>Wijzigen</button>
+            {user.email} · <button type="button" className="link" onClick={wijzigGebruiker}>Uitloggen</button>
           </div>
         </div>
       </header>
@@ -160,13 +163,15 @@ export default function Home() {
         <div className="notice notice-success">
           <strong>Reservering geplaatst.</strong>{' '}
           {getVehicleName(bevestigdeWagen)} · {bevestigdeWagen.variant}, {formatDatumLang(bevestiging.datum)} van {bevestiging.van} tot {bevestiging.tot}.
-          De bevestiging is verstuurd naar {bevestiging.email}.
+          {bevestiging.mailOk
+            ? <> De bevestiging is verstuurd naar {bevestiging.email}.</>
+            : <> De bevestigingsmail kon niet worden verstuurd; de reservering staat er wel.</>}
         </div>
       )}
       {error && <div className="notice notice-error">{error}</div>}
 
       <section className="section">
-        <h2 className="section-title"><span className="step">1</span>Auto</h2>
+        <h2 className="section-title">Kies een auto</h2>
         <div className="vehicle-grid">
           {VEHICLES.map(v => {
             const block = getBlock(blocks, v.id, datum)
@@ -196,8 +201,8 @@ export default function Home() {
                   <div className="vehicle-meta">
                     <Plate kenteken={v.kenteken} />
                     {!block && (aantal === 0
-                      ? <span className="tag tag-green">Vrij</span>
-                      : <span className="tag">{aantal} {aantal === 1 ? 'reservering' : 'reserveringen'}</span>
+                      ? <span className="state">Hele dag vrij</span>
+                      : <span className="state state-busy num">{aantal} {aantal === 1 ? 'reservering' : 'reserveringen'}</span>
                     )}
                   </div>
                 </div>
@@ -209,7 +214,7 @@ export default function Home() {
 
       <div className="booking-grid">
         <section>
-          <h2 className="section-title"><span className="step">2</span>Dag</h2>
+          <h2 className="section-title">Kies een dag</h2>
           <MonthCalendar
             bookings={allBookings}
             selectedDate={datum}
@@ -220,7 +225,7 @@ export default function Home() {
         </section>
 
         <section>
-          <h2 className="section-title"><span className="step">3</span>Tijd</h2>
+          <h2 className="section-title">Kies een tijd</h2>
           <form className="panel" onSubmit={handleSubmit}>
             <div className="panel-body stack">
               <div className="field">

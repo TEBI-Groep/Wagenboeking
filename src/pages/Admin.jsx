@@ -1,19 +1,21 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { uitloggen as logUit } from '../lib/auth'
 import { VEHICLES, getVehicle, getVehicleName } from '../lib/vehicles'
 import { getTodayString, addDays, formatDatumLang, formatDag, formatTijd } from '../lib/date'
 import DayTimeline from '../components/DayTimeline'
 import VehicleLabel from '../components/VehicleLabel'
 import ConfirmButton from '../components/ConfirmButton'
+import Gebruikers from '../components/Gebruikers'
 import { ChevronLeft, ChevronRight, Refresh } from '../components/Icons'
 
 export default function Admin() {
   const today = getTodayString()
   const navigate = useNavigate()
-  const [authLoading, setAuthLoading] = useState(true)
   const [tab, setTab] = useState('boekingen')
   const [error, setError] = useState('')
+  const [aantalGebruikers, setAantalGebruikers] = useState(null)
 
   // Boekingen
   const [boekingen, setBoekingen] = useState([])
@@ -32,22 +34,10 @@ export default function Admin() {
   const [blockSaving, setBlockSaving] = useState(false)
   const [blockMelding, setBlockMelding] = useState('')
 
+  // Toegang wordt gecontroleerd in App.jsx (VereistLogin admin) en afgedwongen door de database.
   useEffect(() => {
-    checkAuth()
+    vernieuwen()
   }, [])
-
-  useEffect(() => {
-    if (!authLoading) vernieuwen()
-  }, [authLoading])
-
-  async function checkAuth() {
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) {
-      navigate('/admin/login')
-      return
-    }
-    setAuthLoading(false)
-  }
 
   function vernieuwen() {
     fetchBoekingen()
@@ -114,8 +104,8 @@ export default function Admin() {
   }
 
   async function uitloggen() {
-    await supabase.auth.signOut()
-    navigate('/admin/login')
+    await logUit()
+    navigate('/start')
   }
 
   // Aankomende boekingen die binnen een blokkade vallen
@@ -131,8 +121,6 @@ export default function Admin() {
     setWagenFilter(block.wagen)
     setZoek('')
   }
-
-  if (authLoading) return null
 
   const zoekTerm = zoek.trim().toLowerCase()
   const gefilterd = boekingen.filter(b =>
@@ -156,7 +144,9 @@ export default function Admin() {
       <header className="page-head">
         <div>
           <h1 className="page-title">Beheer</h1>
-          <p className="page-sub">Reserveringen en beschikbaarheid van de bedrijfswagens.</p>
+          <p className="page-sub num">
+            {boekingen.filter(b => b.datum >= today).length} aankomende boekingen · {actieveBlocks} {actieveBlocks === 1 ? 'blokkade' : 'blokkades'} actief
+          </p>
         </div>
         <div className="row">
           <button type="button" className="btn btn-secondary btn-sm" onClick={vernieuwen}><Refresh /> Vernieuwen</button>
@@ -170,6 +160,9 @@ export default function Admin() {
         </button>
         <button type="button" role="tab" aria-selected={tab === 'blokkades'} className={`tab${tab === 'blokkades' ? ' is-active' : ''}`} onClick={() => setTab('blokkades')}>
           Blokkades <span className="tab-count num">{blocks.length}</span>
+        </button>
+        <button type="button" role="tab" aria-selected={tab === 'gebruikers'} className={`tab${tab === 'gebruikers' ? ' is-active' : ''}`} onClick={() => setTab('gebruikers')}>
+          Gebruikers {aantalGebruikers !== null && <span className="tab-count num">{aantalGebruikers}</span>}
         </button>
       </div>
 
@@ -237,7 +230,7 @@ export default function Admin() {
                       <tr key={`g-${g.datum}`} className="group-row">
                         <td colSpan={6}>
                           <span className="cap">{formatDatumLang(g.datum)}</span>
-                          {g.datum === today && <span className="tag tag-green" style={{ marginLeft: 8 }}>Vandaag</span>}
+                          {g.datum === today && <span className="muted" style={{ fontWeight: 400 }}> · vandaag</span>}
                         </td>
                       </tr>,
                       ...g.items.map(b => (
@@ -351,6 +344,8 @@ export default function Admin() {
           </div>
         </>
       )}
+
+      {tab === 'gebruikers' && <Gebruikers onAantal={setAantalGebruikers} />}
     </div>
   )
 }

@@ -38,7 +38,7 @@ export default function DayTimeline({ date, bookings, blocks, selectedWagen, sel
                 <div
                   key={b.id}
                   className="tl-item"
-                  style={{ ...balk(b.van, b.tot), background: `${v.kleur}29`, borderLeftColor: v.kleur }}
+                  style={balk(b.van, b.tot)}
                   title={`${formatTijd(b.van)}–${formatTijd(b.tot)} · ${b.naam}`}
                 >
                   {formatTijd(b.van)}–{formatTijd(b.tot)} {b.naam}
